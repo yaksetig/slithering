@@ -3,6 +3,7 @@ import subprocess
 import tempfile
 import os
 import json
+import shutil
 
 app = Flask(__name__)
 
@@ -10,7 +11,7 @@ HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html>
 <head>
-    <title>🔍 Circomspect Web Interface</title>
+    <title>🛡️ Slither Smart Contract Analyzer</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -23,7 +24,7 @@ HTML_TEMPLATE = '''
         }
         
         .container { 
-            max-width: 1000px;
+            max-width: 1200px;
             margin: 0 auto;
             background: white; 
             border-radius: 20px; 
@@ -82,7 +83,7 @@ HTML_TEMPLATE = '''
         
         textarea { 
             width: 100%; 
-            height: 300px; 
+            height: 400px; 
             margin: 20px 0; 
             padding: 20px;
             border: 2px solid #e0e0e0;
@@ -152,6 +153,26 @@ HTML_TEMPLATE = '''
             background: #fff3e0;
         }
         
+        .high-severity {
+            border-left-color: #e74c3c;
+            background: #ffebee;
+        }
+        
+        .medium-severity {
+            border-left-color: #ff9800;
+            background: #fff3e0;
+        }
+        
+        .low-severity {
+            border-left-color: #ffc107;
+            background: #fffde7;
+        }
+        
+        .info-severity {
+            border-left-color: #2196f3;
+            background: #e3f2fd;
+        }
+        
         pre { 
             background: #2c3e50; 
             color: #ecf0f1; 
@@ -191,22 +212,75 @@ HTML_TEMPLATE = '''
             color: #7f8c8d;
             border-top: 1px solid #e0e0e0;
         }
+        
+        .info-box {
+            background: #e3f2fd;
+            border: 1px solid #2196f3;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        
+        .severity-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin: 2px;
+        }
+        
+        .severity-high { background: #ffcdd2; color: #b71c1c; }
+        .severity-medium { background: #ffe0b2; color: #e65100; }
+        .severity-low { background: #fff9c4; color: #f57f17; }
+        .severity-info { background: #bbdefb; color: #0d47a1; }
+        
+        .finding {
+            margin: 15px 0;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            border-left: 4px solid #ddd;
+        }
+        
+        .finding h4 {
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+        
+        .finding p {
+            margin: 5px 0;
+            color: #666;
+        }
+        
+        .finding code {
+            background: #e0e0e0;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🔍 Circomspect Web Interface</h1>
-            <p>Security analysis for Circom circuits using circomspect</p>
+            <h1>🛡️ Slither Smart Contract Analyzer</h1>
+            <p>Static analysis framework for Solidity smart contracts</p>
         </div>
         
         <div class="content">
+            <div class="info-box">
+                <strong>ℹ️ About Slither:</strong> Slither is a static analysis framework for Solidity that detects vulnerabilities, 
+                provides code insights, and helps ensure smart contract security. It can identify common issues like reentrancy, 
+                unchecked calls, and gas optimization opportunities.
+            </div>
+            
             <form id="uploadForm">
                 <div class="upload-area" id="uploadArea">
-                    <input type="file" id="fileInput" accept=".circom" style="display: none;">
+                    <input type="file" id="fileInput" accept=".sol" style="display: none;">
                     <div class="upload-icon">📁</div>
                     <div>
-                        <strong>Click to upload .circom file</strong><br>
+                        <strong>Click to upload .sol file</strong><br>
                         <small style="color: #7f8c8d;">or drag & drop here</small>
                     </div>
                 </div>
@@ -215,11 +289,27 @@ HTML_TEMPLATE = '''
                 
                 <textarea 
                     id="codeArea" 
-                    placeholder="Or paste your Circom code here..."
+                    placeholder="Or paste your Solidity code here...
+
+Example:
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract SimpleStorage {
+    uint256 private storedData;
+    
+    function set(uint256 x) public {
+        storedData = x;
+    }
+    
+    function get() public view returns (uint256) {
+        return storedData;
+    }
+}"
                 ></textarea>
                 
                 <button type="submit" class="btn" id="auditBtn">
-                    🔍 Run Circomspect Analysis
+                    🔍 Analyze Contract
                 </button>
             </form>
             
@@ -227,7 +317,7 @@ HTML_TEMPLATE = '''
         </div>
         
         <div class="footer">
-            <p>Powered by <a href="https://github.com/trailofbits/circomspect" target="_blank">circomspect</a></p>
+            <p>Powered by <a href="https://github.com/crytic/slither" target="_blank">Slither</a> by Trail of Bits</p>
         </div>
     </div>
 
@@ -268,8 +358,8 @@ HTML_TEMPLATE = '''
         });
 
         function handleFile(file) {
-            if (!file.name.endsWith('.circom')) {
-                alert('Please upload a .circom file');
+            if (!file.name.endsWith('.sol')) {
+                alert('Please upload a .sol file');
                 return;
             }
             
@@ -292,22 +382,22 @@ HTML_TEMPLATE = '''
             const code = codeArea.value.trim();
             
             if (!code) {
-                alert('Please provide Circom code to analyze');
+                alert('Please provide Solidity code to analyze');
                 return;
             }
 
             auditBtn.disabled = true;
-            auditBtn.innerHTML = '⏳ Running circomspect...';
+            auditBtn.innerHTML = '⏳ Analyzing contract...';
             
             results.innerHTML = `
                 <div class="result loading">
-                    <h3>🔄 Running Circomspect Analysis...</h3>
-                    <p>Please wait while we analyze your circuit</p>
+                    <h3>🔄 Running Slither Analysis...</h3>
+                    <p>Scanning for vulnerabilities and code quality issues...</p>
                 </div>
             `;
 
             try {
-                const response = await fetch('/audit', {
+                const response = await fetch('/analyze', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({code: code})
@@ -325,7 +415,7 @@ HTML_TEMPLATE = '''
                 `;
             } finally {
                 auditBtn.disabled = false;
-                auditBtn.innerHTML = '🔍 Run Circomspect Analysis';
+                auditBtn.innerHTML = '🔍 Analyze Contract';
             }
         });
         
@@ -340,23 +430,48 @@ HTML_TEMPLATE = '''
                 return;
             }
             
-            // Display the raw circomspect output
+            // Display the Slither output
             if (result.output) {
-                const hasIssues = result.output.includes('warning:') || 
-                                 result.output.includes('error:') || 
-                                 result.output.includes('advice:');
+                // Check for findings
+                const hasFindings = result.output.includes('Impact:') || 
+                                   result.output.includes('Reference:') ||
+                                   result.output.includes('found');
+                
+                const hasHighSeverity = result.output.includes('Impact: High');
+                const hasMediumSeverity = result.output.includes('Impact: Medium');
+                const hasLowSeverity = result.output.includes('Impact: Low');
+                const hasInfoSeverity = result.output.includes('Impact: Informational');
+                
+                let resultClass = 'success';
+                let resultTitle = '✅ Analysis Complete';
+                
+                if (hasHighSeverity) {
+                    resultClass = 'high-severity';
+                    resultTitle = '🚨 High Severity Issues Found';
+                } else if (hasMediumSeverity) {
+                    resultClass = 'medium-severity';
+                    resultTitle = '⚠️ Medium Severity Issues Found';
+                } else if (hasLowSeverity) {
+                    resultClass = 'low-severity';
+                    resultTitle = '📋 Low Severity Issues Found';
+                } else if (hasInfoSeverity) {
+                    resultClass = 'info-severity';
+                    resultTitle = 'ℹ️ Informational Findings';
+                } else if (!hasFindings) {
+                    resultTitle = '✅ No Issues Found';
+                }
                 
                 results.innerHTML = `
-                    <div class="result ${hasIssues ? 'warning' : 'success'}">
-                        <h3>${hasIssues ? '📋 Analysis Results' : '✅ No Issues Found'}</h3>
-                        ${hasIssues ? '<pre>' + result.output + '</pre>' : '<p>Circomspect found no issues in your circuit!</p>'}
+                    <div class="result ${resultClass}">
+                        <h3>${resultTitle}</h3>
+                        <pre>${result.output}</pre>
                     </div>
                 `;
             } else {
                 results.innerHTML = `
                     <div class="result success">
                         <h3>✅ Analysis Complete</h3>
-                        <p>Circomspect analysis completed successfully. No issues found.</p>
+                        <p>Slither analysis completed successfully. No issues found.</p>
                     </div>
                 `;
             }
@@ -370,52 +485,70 @@ HTML_TEMPLATE = '''
 def index():
     return render_template_string(HTML_TEMPLATE)
 
-@app.route('/audit', methods=['POST'])
-def audit():
+@app.route('/analyze', methods=['POST'])
+def analyze():
     try:
         data = request.get_json()
-        circom_code = data['code']
+        solidity_code = data['code']
         
-        # Create a temporary file for the circom code
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.circom', delete=False) as f:
-            f.write(circom_code)
-            temp_file = f.name
+        # Create a temporary directory for the contract
+        temp_dir = tempfile.mkdtemp()
         
         try:
-            # Run circomspect
+            # Create a temporary file for the Solidity code
+            contract_file = os.path.join(temp_dir, 'Contract.sol')
+            with open(contract_file, 'w') as f:
+                f.write(solidity_code)
+            
+            # Run slither
             result = subprocess.run(
-                ['circomspect', temp_file],
+                ['slither', contract_file, '--json', '-'],
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=60,
+                cwd=temp_dir
             )
+            
+            # Try to get human-readable output as well
+            result_human = subprocess.run(
+                ['slither', contract_file],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                cwd=temp_dir
+            )
+            
+            # Use human-readable output if available, otherwise use JSON
+            output = result_human.stdout if result_human.stdout else result.stdout
+            if result_human.stderr and not output:
+                output = result_human.stderr
             
             # Return the output
             return jsonify({
                 'success': True,
-                'output': result.stdout if result.stdout else result.stderr,
+                'output': output,
                 'returncode': result.returncode
             })
             
         finally:
-            # Clean up temp file
-            if os.path.exists(temp_file):
-                os.unlink(temp_file)
+            # Clean up temp directory
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
         
     except subprocess.TimeoutExpired:
         return jsonify({
             'success': False,
-            'error': 'Analysis timed out after 30 seconds'
+            'error': 'Analysis timed out after 60 seconds'
         })
     except FileNotFoundError:
         return jsonify({
             'success': False,
-            'error': 'circomspect not found. Please ensure circomspect is installed and in PATH.'
+            'error': 'slither not found. Please ensure slither-analyzer is installed.'
         })
     except Exception as e:
         return jsonify({
             'success': False,
-            'error': str(e)
+            'error': f'Error running slither: {str(e)}'
         })
 
 if __name__ == '__main__':
