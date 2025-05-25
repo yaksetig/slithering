@@ -500,7 +500,7 @@ def analyze():
             with open(contract_file, 'w') as f:
                 f.write(solidity_code)
             
-            # Run slither
+            # Run slither with JSON output
             result = subprocess.run(
                 ['slither', contract_file, '--json', '-'],
                 capture_output=True,
@@ -509,24 +509,30 @@ def analyze():
                 cwd=temp_dir
             )
             
-            # Try to get human-readable output as well
-            result_human = subprocess.run(
-                ['slither', contract_file],
-                capture_output=True,
-                text=True,
-                timeout=60,
-                cwd=temp_dir
-            )
+            # Parse the JSON output
+            output_text = ""
+            if result.stdout:
+                try:
+                    json_data = json.loads(result.stdout)
+                    output_text = format_slither_output(json_data)
+                except json.JSONDecodeError:
+                    # If JSON parsing fails, try human-readable format
+                    result_human = subprocess.run(
+                        ['slither', contract_file],
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                        cwd=temp_dir
+                    )
+                    output_text = result_human.stdout if result_human.stdout else result.stdout
             
-            # Use human-readable output if available, otherwise use JSON
-            output = result_human.stdout if result_human.stdout else result.stdout
-            if result_human.stderr and not output:
-                output = result_human.stderr
+            if not output_text and result.stderr:
+                output_text = result.stderr
             
-            # Return the output
+            # Return the formatted output
             return jsonify({
                 'success': True,
-                'output': output,
+                'output': output_text,
                 'returncode': result.returncode
             })
             
@@ -550,6 +556,86 @@ def analyze():
             'success': False,
             'error': f'Error running slither: {str(e)}'
         })
+
+def format_slither_output(json_data):
+    """Format Slither JSON output into readable text"""
+    output_lines = []
+    
+    if not json_data.get('success'):
+        return "Analysis failed: " + json_data.get('error', 'Unknown error')
+    
+    results = json_data.get('results', {})
+    detectors = results.get('detectors', [])
+    
+    if not detectors:
+        return "✅ No issues found! Your contract appears to be secure."
+    
+    # Group findings by severity
+    severity_groups = {
+        'High': [],
+        'Medium': [],
+        'Low': [],
+        'Informational': []
+    }
+    
+    for detector in detectors:
+        impact = detector.get('impact', 'Unknown')
+        severity_groups[impact].append(detector)
+    
+    # Format output
+    output_lines.append(f"🔍 Slither Analysis Results")
+    output_lines.append(f"{'='*60}")
+    output_lines.append(f"Found {len(detectors)} issue(s)\n")
+    
+    # Display findings by severity
+    for severity in ['High', 'Medium', 'Low', 'Informational']:
+        findings = severity_groups[severity]
+        if findings:
+            output_lines.append(f"\n{get_severity_emoji(severity)} {severity.upper()} SEVERITY ({len(findings)} issue(s))")
+            output_lines.append(f"{'-'*60}")
+            
+            for i, finding in enumerate(findings, 1):
+                output_lines.append(f"\nIssue #{i}:")
+                output_lines.append(f"Type: {finding.get('check', 'Unknown')}")
+                output_lines.append(f"Confidence: {finding.get('confidence', 'Unknown')}")
+                
+                # Clean up the description
+                description = finding.get('description', '').strip()
+                description = description.replace('\n\t', '\n  • ')
+                output_lines.append(f"\nDescription:")
+                output_lines.append(description)
+                
+                # Add location info if available
+                if finding.get('elements'):
+                    output_lines.append(f"\nLocation:")
+                    for element in finding['elements']:
+                        if element.get('source_mapping'):
+                            lines = element['source_mapping'].get('lines', [])
+                            name = element.get('name', 'Unknown')
+                            elem_type = element.get('type', 'Unknown')
+                            if lines:
+                                output_lines.append(f"  • {elem_type} '{name}' at lines {lines[0]}-{lines[-1]}")
+                
+                output_lines.append(f"\n{'-'*40}")
+    
+    output_lines.append(f"\n{'='*60}")
+    output_lines.append("📊 Summary:")
+    output_lines.append(f"  • High: {len(severity_groups['High'])}")
+    output_lines.append(f"  • Medium: {len(severity_groups['Medium'])}")
+    output_lines.append(f"  • Low: {len(severity_groups['Low'])}")
+    output_lines.append(f"  • Informational: {len(severity_groups['Informational'])}")
+    
+    return '\n'.join(output_lines)
+
+def get_severity_emoji(severity):
+    """Get emoji for severity level"""
+    emojis = {
+        'High': '🚨',
+        'Medium': '⚠️',
+        'Low': '📋',
+        'Informational': 'ℹ️'
+    }
+    return emojis.get(severity, '📌')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
