@@ -1,32 +1,34 @@
-# syntax=docker/dockerfile:1
-# force AMD64 so we can always pull the AMD64 Verifpal binary
-FROM --platform=linux/amd64 python:3.11-slim
+FROM python:3.11-slim
 
-# Install system deps
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
-    build-essential \
     git \
-    pkg-config \
-    libssl-dev \
-  && rm -rf /var/lib/apt/lists/*
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
-# Fetch & install Verifpal v0.26.0 (AMD64)
-/usr/bin/curl -L \
-    https://github.com/symbolicsoft/verifpal/releases/download/v0.26.0/verifpal_linux_amd64 \
-  -o /usr/local/bin/verifpal \
-  && chmod +x /usr/local/bin/verifpal
+# Install Node.js (required for solc)
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs
 
-# Create app dir
+# Install solc (Solidity compiler)
+RUN npm install -g solc
+
+# Set working directory
 WORKDIR /app
 
-# Python deps
+# Copy requirements and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Your Flask app
+# Install Slither
+RUN pip install slither-analyzer
+
+# Copy application code
 COPY app.py .
 
-# Expose & run
+# Expose port
 EXPOSE 5000
+
+# Run the application
 CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
